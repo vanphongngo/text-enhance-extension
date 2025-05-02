@@ -5,6 +5,12 @@
   "manifest_version": 3,
   "action": {
     "default_popup": "hello.html",
-    "default_icon": "icons/icon.png"
-  }
+    "default_icon": "icons/icon.svg"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["scripts/content.js"]
+    }
+  ]
 }
