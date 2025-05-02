@@ -1,0 +1,19 @@
+{
+  "name": "chrome-extension-typescript",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch & nodemon dist/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "chrome-types": "^0.1.349",
+    "typescript": "^5.8.3"
+  }
+}
