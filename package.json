@@ -13,9 +13,6 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
-    "@types/node": "^22.15.3",
-    "chrome-types": "^0.1.349",
-    "copyfiles": "^2.4.1",
-    "typescript": "^5.8.3"
+    "chrome-types": "^0.1.349"
   }
 }
