@@ -975,11 +975,27 @@ Provide a well-formatted response that directly addresses the user's request.`;
         }
       };
 
+      // FIX: Prevent keyboard events from propagating to Notion
       input.addEventListener("keydown", (e) => {
+        // Prevent event from bubbling up
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        
         if (e.key === "Enter") {
           e.preventDefault();
           handleSubmit();
         }
+      });
+
+      // Also prevent keyup and keypress events to be thorough
+      input.addEventListener("keyup", (e) => {
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+      });
+      
+      input.addEventListener("keypress", (e) => {
+        e.stopPropagation();
+        e.stopImmediatePropagation();
       });
 
       submitBtn.addEventListener("click", handleSubmit);
