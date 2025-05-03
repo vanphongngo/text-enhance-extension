@@ -18,7 +18,28 @@ function getGeminiToken() {
     window.alert(
       "No Gemini API token found. Please add a token in the extension popup, then reload page"
     );
+    return; // Exit if no API key
   }
+
+  // Function to check if running inside an iframe
+  const isInIframe = () => {
+    return window.self !== window.top;
+  };
+
+  // Function to send selection data to the parent window
+  const sendSelectionToParent = (selectionData) => {
+    try {
+      window.parent.postMessage(
+        {
+          type: "TEXT_ENHANCER_SELECTION",
+          data: selectionData,
+        },
+        "*" // In production, use specific origin like "https://*.atlassian.net"
+      );
+    } catch (error) {
+      console.error("Error sending selection to parent:", error);
+    }
+  };
 
   // Function to correct grammar using Gemini API
   async function correctGrammarWithGemini(text, apiKey) {
@@ -652,7 +673,7 @@ Provide a well-formatted response that directly addresses the user's request.`;
     const copyBtn = document.createElement("button");
     copyBtn.className = "copy-btn";
     copyBtn.textContent = "Copy";
-    useBtn.addEventListener("click", () => copyToClipboard(data.correctedText, copyBtn));
+    copyBtn.addEventListener("click", () => copyToClipboard(data.correctedText, copyBtn));
     
     actionDiv.appendChild(useBtn);
     actionDiv.appendChild(copyBtn);
@@ -767,8 +788,11 @@ Provide a well-formatted response that directly addresses the user's request.`;
     let lastMousePosition = { x: 0, y: 0 };
     let cachedSelectionState = null;
 
-    // Create the UI elements
-    const { optionsContainer, popupContent, contentContainer } = createElements();
+    // Create UI elements only in the main window
+    let uiElements = null;
+    if (!isInIframe()) {
+      uiElements = createElements();
+    }
 
     // Function to check if element is an input or textarea
     const isInputElement = (element) => {
@@ -805,6 +829,7 @@ Provide a well-formatted response that directly addresses the user's request.`;
             element.selectionStart,
             element.selectionEnd
           ),
+          isIframe: isInIframe(),
         };
       } else if (element.getAttribute("contenteditable") === "true") {
         const selection = window.getSelection();
@@ -816,6 +841,7 @@ Provide a well-formatted response that directly addresses the user's request.`;
           element: element,
           range: range.cloneRange(),
           text: selection.toString(),
+          isIframe: isInIframe(),
         };
       }
 
@@ -830,7 +856,22 @@ Provide a well-formatted response that directly addresses the user's request.`;
       }
 
       try {
-        if (cachedSelectionState.type === "input") {
+        if (cachedSelectionState.isIframe) {
+          // Send message to iframe to replace text
+          const iframe = document.querySelector("iframe[class*='editor'], iframe[id*='editor'], iframe[data-testid*='editor']");
+          if (iframe && iframe.contentWindow) {
+            iframe.contentWindow.postMessage(
+              {
+                type: "TEXT_ENHANCER_REPLACE_TEXT",
+                newText: newText,
+                selectionState: cachedSelectionState,
+              },
+              "*"
+            );
+          } else {
+            console.error("Could not find editor iframe for text replacement");
+          }
+        } else if (cachedSelectionState.type === "input") {
           const elem = cachedSelectionState.element;
           const start = cachedSelectionState.start;
           const end = cachedSelectionState.end;
@@ -857,189 +898,305 @@ Provide a well-formatted response that directly addresses the user's request.`;
         console.error("Error replacing text:", error);
       }
 
-      popupContent.style.display = "none";
+      if (uiElements) {
+        uiElements.popupContent.style.display = "none";
+      }
     };
 
-    // Remove the global handlers since we're now using direct event listeners
+    // Debounce function to prevent rapid event firing
+    const debounce = (func, wait) => {
+      let timeout;
+      return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), wait);
+      };
+    };
 
-    // Handle text selection and mouse up events
-    document.addEventListener("mouseup", function (e) {
-      setTimeout(() => {
-        const selection = window.getSelection();
-        const selectedText = selection.toString().trim();
-
-        if (!selectedText || selectedText.length < 3) {
-          optionsContainer.style.opacity = "0";
-          optionsContainer.style.pointerEvents = "none";
-          return;
-        }
-
-        activeElement = document.activeElement;
-
-        if (!isInputElement(activeElement)) {
-          optionsContainer.style.opacity = "0";
-          optionsContainer.style.pointerEvents = "none";
-          return;
-        }
-
-        const newSelectionState = captureSelectionState();
-        if (!newSelectionState) return;
-
-        cachedSelectionState = newSelectionState;
-        currentSelection = selectedText;
-
-        const optionsWidth = 300;
-        const optionsHeight = 40;
-
-        const safePos = getPositionInViewport(
-          lastMousePosition.x,
-          lastMousePosition.y + 10,
-          optionsWidth,
-          optionsHeight
-        );
-
-        optionsContainer.style.top = window.scrollY + safePos.y + "px";
-        optionsContainer.style.left = window.scrollX + safePos.x + "px";
-        optionsContainer.style.opacity = "1";
-        optionsContainer.style.pointerEvents = "auto";
-
-        popupContent.style.display = "none";
-      }, 10);
-    });
-
-    // Set up event handlers for option buttons
-    document.getElementById("text-enhancer-grammar").addEventListener("click", async () => {
-      if (isProcessing) return;
-      
-      showPopup("Correct Grammar");
-      contentContainer.innerHTML = '<div style="text-align: center;">Analyzing grammar...</div>';
-      isProcessing = true;
-
+    // Handle text selection in iframe
+    if (isInIframe()) {
+      // Ensure iframe document is accessible
       try {
-        const result = await correctGrammarWithGemini(currentSelection, API_KEY);
-        displayGrammarCorrection(result, replaceSelectedText);
+        const handleMouseUp = debounce((e) => {
+          const selection = window.getSelection();
+          const selectedText = selection.toString().trim();
+
+          if (!selectedText || selectedText.length < 3) return;
+
+          activeElement = document.activeElement;
+
+          if (!isInputElement(activeElement)) return;
+
+          const selectionState = captureSelectionState();
+          if (!selectionState) return;
+
+          // Adjust mouse coordinates to main window context
+          const iframeRect = window.frameElement ? window.frameElement.getBoundingClientRect() : { left: 0, top: 0 };
+          const adjustedX = e.clientX + iframeRect.left + window.scrollX;
+          const adjustedY = e.clientY + iframeRect.top + window.scrollY;
+
+          sendSelectionToParent({
+            text: selectedText,
+            mouseX: adjustedX,
+            mouseY: adjustedY,
+            selectionState: selectionState,
+          });
+        }, 50);
+
+        // Attach multiple event listeners to ensure capture
+        document.addEventListener("mouseup", handleMouseUp);
+        document.addEventListener("selectionchange", () => {
+          // Trigger mouseup logic on selection change to catch edge cases
+          const event = new Event("mouseup");
+          document.dispatchEvent(event);
+        });
+
+        console.log("Text enhancer initialized in iframe with enhanced mouseup handling");
       } catch (error) {
-        contentContainer.innerHTML = `<div style="color: #e74c3c">Error: ${error.message}</div>`;
-      } finally {
-        isProcessing = false;
+        console.error("Error setting up iframe event listeners:", error);
       }
-    });
 
-    document.getElementById("text-enhancer-improve").addEventListener("click", async () => {
-      if (isProcessing) return;
-      
-      showPopup("Improve Writing");
-      contentContainer.innerHTML = '<div style="text-align: center;">Generating improvements...</div>';
-      isProcessing = true;
+      // Listen for replace text messages from parent
+      window.addEventListener("message", (event) => {
+        if (event.data.type === "TEXT_ENHANCER_REPLACE_TEXT") {
+          cachedSelectionState = event.data.selectionState;
+          try {
+            if (cachedSelectionState.type === "input") {
+              const elem = cachedSelectionState.element;
+              const start = cachedSelectionState.start;
+              const end = cachedSelectionState.end;
+              const currentValue = elem.value;
 
-      try {
-        const result = await improveWritingWithGemini(currentSelection, API_KEY);
-        displayWritingImprovements(result, replaceSelectedText);
-      } catch (error) {
-        contentContainer.innerHTML = `<div style="color: #e74c3c">Error: ${error.message}</div>`;
-      } finally {
-        isProcessing = false;
-      }
-    });
+              elem.value =
+                currentValue.substring(0, start) +
+                event.data.newText +
+                currentValue.substring(end);
 
-    document.getElementById("text-enhancer-custom").addEventListener("click", () => {
-      showPopup("Custom Prompt");
-      
-      contentContainer.innerHTML = `
-        <div class="custom-prompt-container">
-          <h3>Custom Prompt</h3>
-          <input type="text" class="custom-prompt-input" placeholder="Enter your request (e.g., make it more formal, add examples, etc.)" />
-          <button class="custom-submit-btn">Generate</button>
-        </div>`;
+              elem.focus();
+              elem.setSelectionRange(start, start + event.data.newText.length);
+            } else if (cachedSelectionState.type === "contenteditable") {
+              const elem = cachedSelectionState.element;
+              const range = cachedSelectionState.range;
 
-      const input = contentContainer.querySelector(".custom-prompt-input");
-      const submitBtn = contentContainer.querySelector(".custom-submit-btn");
+              elem.focus();
+              const selection = window.getSelection();
+              selection.removeAllRanges();
+              selection.addRange(range);
+              document.execCommand("insertText", false, event.data.newText);
+            }
+          } catch (error) {
+            console.error("Error replacing text in iframe:", error);
+          }
+        }
+      });
 
-      const handleSubmit = async () => {
-        const prompt = input.value.trim();
-        if (!prompt || isProcessing) return;
+      return;
+    }
 
+    // Main window logic
+    if (uiElements) {
+      document.addEventListener("mouseup", (e) => {
+        setTimeout(() => {
+          const selection = window.getSelection();
+          const selectedText = selection.toString().trim();
+
+          if (!selectedText || selectedText.length < 3) {
+            uiElements.optionsContainer.style.opacity = "0";
+            uiElements.optionsContainer.style.pointerEvents = "none";
+            return;
+          }
+
+          activeElement = document.activeElement;
+
+          if (!isInputElement(activeElement)) {
+            uiElements.optionsContainer.style.opacity = "0";
+            uiElements.optionsContainer.style.pointerEvents = "none";
+            return;
+          }
+
+          const newSelectionState = captureSelectionState();
+          if (!newSelectionState) return;
+
+          cachedSelectionState = newSelectionState;
+          currentSelection = selectedText;
+
+          const optionsWidth = 300;
+          const optionsHeight = 40;
+
+          const safePos = getPositionInViewport(
+            lastMousePosition.x,
+            lastMousePosition.y + 10,
+            optionsWidth,
+            optionsHeight
+          );
+
+          uiElements.optionsContainer.style.top = window.scrollY + safePos.y + "px";
+          uiElements.optionsContainer.style.left = window.scrollX + safePos.x + "px";
+          uiElements.optionsContainer.style.opacity = "1";
+          uiElements.optionsContainer.style.pointerEvents = "auto";
+
+          uiElements.popupContent.style.display = "none";
+        }, 100); // Increased delay to ensure selection is stable
+      });
+
+      // Handle messages from iframe
+      window.addEventListener("message", (event) => {
+        if (event.data.type === "TEXT_ENHANCER_SELECTION") {
+          const { text, mouseX, mouseY, selectionState } = event.data.data;
+
+          currentSelection = text;
+          cachedSelectionState = selectionState;
+
+          const optionsWidth = 300;
+          const optionsHeight = 40;
+
+          const safePos = getPositionInViewport(
+            mouseX,
+            mouseY + 10,
+            optionsWidth,
+            optionsHeight
+          );
+
+          uiElements.optionsContainer.style.top = window.scrollY + safePos.y + "px";
+          uiElements.optionsContainer.style.left = window.scrollX + safePos.x + "px";
+          uiElements.optionsContainer.style.opacity = "1";
+          uiElements.optionsContainer.style.pointerEvents = "auto";
+
+          uiElements.popupContent.style.display = "none";
+        }
+      });
+
+      // Set up event handlers for option buttons
+      document.getElementById("text-enhancer-grammar").addEventListener("click", async () => {
+        if (isProcessing) return;
+        
+        showPopup("Correct Grammar");
+        uiElements.contentContainer.innerHTML = '<div style="text-align: center;">Analyzing grammar...</div>';
         isProcessing = true;
-        submitBtn.disabled = true;
-        submitBtn.innerHTML = '<span class="loading-spinner"></span> Processing...';
 
         try {
-          const result = await customPromptWithGemini(currentSelection, prompt, API_KEY);
-          displayCustomResponse(result);
+          const result = await correctGrammarWithGemini(currentSelection, API_KEY);
+          displayGrammarCorrection(result, replaceSelectedText);
         } catch (error) {
-          contentContainer.innerHTML = `<div style="color: #e74c3c">Error: ${error.message}</div>`;
+          uiElements.contentContainer.innerHTML = `<div style="color: #e74c3c">Error: ${error.message}</div>`;
         } finally {
           isProcessing = false;
-          submitBtn.disabled = false;
-          submitBtn.innerHTML = 'Generate';
         }
+      });
+
+      document.getElementById("text-enhancer-improve").addEventListener("click", async () => {
+        if (isProcessing) return;
+        
+        showPopup("Improve Writing");
+        uiElements.contentContainer.innerHTML = '<div style="text-align: center;">Generating improvements...</div>';
+        isProcessing = true;
+
+        try {
+          const result = await improveWritingWithGemini(currentSelection, API_KEY);
+          displayWritingImprovements(result, replaceSelectedText);
+        } catch (error) {
+          uiElements.contentContainer.innerHTML = `<div style="color: #e74c3c">Error: ${error.message}</div>`;
+        } finally {
+          isProcessing = false;
+        }
+      });
+
+      document.getElementById("text-enhancer-custom").addEventListener("click", () => {
+        showPopup("Custom Prompt");
+        
+        uiElements.contentContainer.innerHTML = `
+          <div class="custom-prompt-container">
+            <h3>Custom Prompt</h3>
+            <input type="text" class="custom-prompt-input" placeholder="Enter your request (e.g., make it more formal, add examples, etc.)" />
+            <button class="custom-submit-btn">Generate</button>
+          </div>`;
+
+        const input = uiElements.contentContainer.querySelector(".custom-prompt-input");
+        const submitBtn = uiElements.contentContainer.querySelector(".custom-submit-btn");
+
+        const handleSubmit = async () => {
+          const prompt = input.value.trim();
+          if (!prompt || isProcessing) return;
+
+          isProcessing = true;
+          submitBtn.disabled = true;
+          submitBtn.innerHTML = '<span class="loading-spinner"></span> Processing...';
+
+          try {
+            const result = await customPromptWithGemini(currentSelection, prompt, API_KEY);
+            displayCustomResponse(result);
+          } catch (error) {
+            uiElements.contentContainer.innerHTML = `<div style="color: #e74c3c">Error: ${error.message}</div>`;
+          } finally {
+            isProcessing = false;
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = 'Generate';
+          }
+        };
+
+        // Prevent keyboard events from propagating to Notion
+        input.addEventListener("keydown", (e) => {
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          
+          if (e.key === "Enter") {
+            e.preventDefault();
+            handleSubmit();
+          }
+        });
+
+        input.addEventListener("keyup", (e) => {
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+        });
+        
+        input.addEventListener("keypress", (e) => {
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+        });
+
+        submitBtn.addEventListener("click", handleSubmit);
+        input.focus();
+      });
+
+      // Function to show popup
+      const showPopup = (title) => {
+        uiElements.popupContent.querySelector("#text-enhancer-drag-handle span").textContent = `✦ ${title}`;
+        
+        const popupWidth = 450;
+        const popupHeight = 400;
+
+        const optionsRect = uiElements.optionsContainer.getBoundingClientRect();
+        const safePos = getPositionInViewport(
+          optionsRect.left,
+          optionsRect.bottom + 5,
+          popupWidth,
+          popupHeight
+        );
+
+        uiElements.popupContent.style.top = window.scrollY + safePos.y + "px";
+        uiElements.popupContent.style.left = window.scrollX + safePos.x + "px";
+        uiElements.popupContent.style.display = "block";
       };
 
-      // FIX: Prevent keyboard events from propagating to Notion
-      input.addEventListener("keydown", (e) => {
-        // Prevent event from bubbling up
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        
-        if (e.key === "Enter") {
-          e.preventDefault();
-          handleSubmit();
+      // Close button functionality
+      const closeBtn = uiElements.popupContent.querySelector(".close-btn");
+      closeBtn.addEventListener("click", () => {
+        uiElements.popupContent.style.display = "none";
+        uiElements.optionsContainer.style.opacity = "0";
+        uiElements.optionsContainer.style.pointerEvents = "none";
+      });
+
+      // Handle escape key to dismiss
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") {
+          uiElements.popupContent.style.display = "none";
+          uiElements.optionsContainer.style.opacity = "0";
+          uiElements.optionsContainer.style.pointerEvents = "none";
         }
       });
+    }
 
-      // Also prevent keyup and keypress events to be thorough
-      input.addEventListener("keyup", (e) => {
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-      });
-      
-      input.addEventListener("keypress", (e) => {
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-      });
-
-      submitBtn.addEventListener("click", handleSubmit);
-      input.focus();
-    });
-
-    // Function to show popup
-    const showPopup = (title) => {
-      popupContent.querySelector("#text-enhancer-drag-handle span").textContent = `✦ ${title}`;
-      
-      const popupWidth = 450;
-      const popupHeight = 400;
-
-      const optionsRect = optionsContainer.getBoundingClientRect();
-      const safePos = getPositionInViewport(
-        optionsRect.left,
-        optionsRect.bottom + 5,
-        popupWidth,
-        popupHeight
-      );
-
-      popupContent.style.top = window.scrollY + safePos.y + "px";
-      popupContent.style.left = window.scrollX + safePos.x + "px";
-      popupContent.style.display = "block";
-    };
-
-    // Close button functionality
-    const closeBtn = popupContent.querySelector(".close-btn");
-    closeBtn.addEventListener("click", () => {
-      popupContent.style.display = "none";
-      optionsContainer.style.opacity = "0";
-      optionsContainer.style.pointerEvents = "none";
-    });
-
-    // Handle escape key to dismiss
-    document.addEventListener("keydown", function (e) {
-      if (e.key === "Escape") {
-        popupContent.style.display = "none";
-        optionsContainer.style.opacity = "0";
-        optionsContainer.style.pointerEvents = "none";
-      }
-    });
-
-    console.log("Enhanced text enhancer tool activated with three options!");
+    console.log("Enhanced text enhancer tool activated with iframe support!");
   };
 
   // Initialize the enhancer when the page is loaded
