@@ -263,54 +263,41 @@ Provide a well-formatted response that directly addresses the user's request.`;
     optionsContainer.style.cssText = `
       position: absolute;
       display: flex;
-      gap: 8px;
+      gap: 5px;
       z-index: 99999;
       opacity: 0;
       pointer-events: none;
-      padding: 5px;
-      background: white;
-      border-radius: 8px;
-      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
-      border: 1px solid rgba(0, 0, 0, 0.1);
     `;
 
     // Create option buttons
     const options = [
-      { id: "grammar", icon: "✓", text: "Grammar", color: "#3498db", hoverColor: "#2980b9" },
-      { id: "improve", icon: "✨", text: "Improve", color: "#2ecc71", hoverColor: "#27ae60" },
-      { id: "custom", icon: "✍️", text: "Custom", color: "#e67e22", hoverColor: "#d35400" },
+      { id: "grammar", text: "Correct Grammar", color: "#3498db" },
+      { id: "improve", text: "Improve Writing", color: "#2ecc71" },
+      { id: "custom", text: "Custom Prompt", color: "#e67e22" },
     ];
 
     options.forEach((option) => {
       const button = document.createElement("button");
       button.id = `text-enhancer-${option.id}`;
-      button.innerHTML = `<span style="margin-right: 4px;">${option.icon}</span>${option.text}`;
+      button.textContent = option.text;
       button.style.cssText = `
         background-color: ${option.color};
         color: white;
         border: none;
-        padding: 6px 10px;
-        border-radius: 6px;
+        padding: 8px 12px;
+        border-radius: 4px;
         cursor: pointer;
-        font-size: 12px;
+        font-size: 13px;
         white-space: nowrap;
-        display: inline-flex;
-        align-items: center;
         transition: all 0.2s ease;
-        font-weight: 500;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
       `;
       
       button.addEventListener("mouseover", () => {
-        button.style.backgroundColor = option.hoverColor;
-        button.style.transform = "translateY(-1px)";
-        button.style.boxShadow = "0 4px 8px rgba(0, 0, 0, 0.15)";
+        button.style.opacity = "0.9";
       });
       
       button.addEventListener("mouseout", () => {
-        button.style.backgroundColor = option.color;
-        button.style.transform = "translateY(0)";
-        button.style.boxShadow = "0 2px 4px rgba(0, 0, 0, 0.1)";
+        button.style.opacity = "1";
       });
       
       optionsContainer.appendChild(button);
@@ -439,10 +426,6 @@ Provide a well-formatted response that directly addresses the user's request.`;
       .copy-btn:hover {
         background-color: #9b59b6;
       }
-      .copy-btn:disabled {
-        background-color: #bdc3c7;
-        cursor: not-allowed;
-      }
       .use-btn {
         background-color: #2ecc71;
         color: white;
@@ -455,10 +438,6 @@ Provide a well-formatted response that directly addresses the user's request.`;
       }
       .use-btn:hover {
         background-color: #27ae60;
-      }
-      .use-btn:disabled {
-        background-color: #bdc3c7;
-        cursor: not-allowed;
       }
       .custom-prompt-container {
         margin-bottom: 15px;
@@ -606,125 +585,68 @@ Provide a well-formatted response that directly addresses the user's request.`;
   };
 
   // Function to display grammar corrections
-  const displayGrammarCorrection = (data, replaceTextFunction) => {
+  const displayGrammarCorrection = (data) => {
     const container = document.getElementById("text-enhancer-content");
-    container.innerHTML = ""; // Clear previous content
+    let html = "";
 
     if (data.errors && data.errors.length > 0) {
-      const errorSection = document.createElement("div");
-      errorSection.innerHTML = "<h3>Grammar Corrections:</h3>";
-      
+      html += "<h3>Grammar Corrections:</h3>";
       data.errors.forEach((error) => {
-        const errorItem = document.createElement("div");
-        errorItem.className = "error-item";
-        errorItem.innerHTML = `
-          <div><span class="error-original">${error.original}</span> → <span class="error-correction">${error.correction}</span></div>
-          <div class="error-explanation">Explanation: ${error.explanation}</div>
-        `;
-        errorSection.appendChild(errorItem);
+        html += `
+          <div class="error-item">
+            <div><span class="error-original">${error.original}</span> → <span class="error-correction">${error.correction}</span></div>
+            <div class="error-explanation">Explanation: ${error.explanation}</div>
+          </div>`;
       });
-      
-      container.appendChild(errorSection);
     } else {
-      const noErrorDiv = document.createElement("div");
-      noErrorDiv.className = "suggestion-container";
-      noErrorDiv.textContent = "No grammar errors found!";
-      container.appendChild(noErrorDiv);
+      html += "<div class='suggestion-container'>No grammar errors found!</div>";
     }
 
-    // Create corrected text section
-    const correctedSection = document.createElement("div");
-    correctedSection.className = "suggestion-container";
-    correctedSection.innerHTML = `
-      <div class="suggestion-header">Corrected Text:</div>
-      <div class="suggestion-text">${data.correctedText}</div>
-    `;
-    
-    // Create action buttons
-    const actionDiv = document.createElement("div");
-    actionDiv.className = "suggestion-actions";
-    
-    const useBtn = document.createElement("button");
-    useBtn.className = "use-btn";
-    useBtn.textContent = "Use This";
-    useBtn.addEventListener("click", () => replaceTextFunction(data.correctedText));
-    
-    const copyBtn = document.createElement("button");
-    copyBtn.className = "copy-btn";
-    copyBtn.textContent = "Copy";
-    useBtn.addEventListener("click", () => copyToClipboard(data.correctedText, copyBtn));
-    
-    actionDiv.appendChild(useBtn);
-    actionDiv.appendChild(copyBtn);
-    correctedSection.appendChild(actionDiv);
-    
-    container.appendChild(correctedSection);
+    html += `
+      <div class="suggestion-container">
+        <div class="suggestion-header">Corrected Text:</div>
+        <div class="suggestion-text">${data.correctedText}</div>
+        <div class="suggestion-actions">
+          <button class="use-btn" onclick="replaceTextHandler('${encodeURIComponent(data.correctedText)}')">Use This</button>
+          <button class="copy-btn" onclick="copyHandler('${encodeURIComponent(data.correctedText)}', this)">Copy</button>
+        </div>
+      </div>`;
+
+    container.innerHTML = html;
   };
 
   // Function to display writing improvements
-  const displayWritingImprovements = (data, replaceTextFunction) => {
+  const displayWritingImprovements = (data) => {
     const container = document.getElementById("text-enhancer-content");
-    container.innerHTML = ""; // Clear previous content
+    let html = "";
 
     if (data.suggestions && data.suggestions.length > 0) {
       data.suggestions.forEach((suggestion, index) => {
-        const suggestionDiv = document.createElement("div");
-        suggestionDiv.className = "suggestion-container";
-        
-        const headerDiv = document.createElement("div");
-        headerDiv.className = "suggestion-header";
-        headerDiv.textContent = `${suggestion.style} Version:`;
-        suggestionDiv.appendChild(headerDiv);
-        
-        if (suggestion.improvements) {
-          const improvementList = document.createElement("div");
-          improvementList.className = "improvement-list";
-          suggestion.improvements.forEach(imp => {
-            const itemDiv = document.createElement("div");
-            itemDiv.className = "improvement-item";
-            itemDiv.textContent = `• ${imp}`;
-            improvementList.appendChild(itemDiv);
-          });
-          suggestionDiv.appendChild(improvementList);
-        }
-        
-        const textDiv = document.createElement("div");
-        textDiv.className = "suggestion-text";
-        textDiv.textContent = suggestion.text;
-        suggestionDiv.appendChild(textDiv);
-        
-        // Create action buttons
-        const actionDiv = document.createElement("div");
-        actionDiv.className = "suggestion-actions";
-        
-        const useBtn = document.createElement("button");
-        useBtn.className = "use-btn";
-        useBtn.textContent = "Use This";
-        useBtn.addEventListener("click", () => replaceTextFunction(suggestion.text));
-        
-        const copyBtn = document.createElement("button");
-        copyBtn.className = "copy-btn";
-        copyBtn.textContent = "Copy";
-        copyBtn.addEventListener("click", () => copyToClipboard(suggestion.text, copyBtn));
-        
-        actionDiv.appendChild(useBtn);
-        actionDiv.appendChild(copyBtn);
-        suggestionDiv.appendChild(actionDiv);
-        
-        container.appendChild(suggestionDiv);
+        html += `
+          <div class="suggestion-container">
+            <div class="suggestion-header">${suggestion.style} Version:</div>
+            ${suggestion.improvements ? `
+              <div class="improvement-list">
+                ${suggestion.improvements.map(imp => `<div class="improvement-item">• ${imp}</div>`).join('')}
+              </div>
+            ` : ''}
+            <div class="suggestion-text">${suggestion.text}</div>
+            <div class="suggestion-actions">
+              <button class="use-btn" onclick="replaceTextHandler('${encodeURIComponent(suggestion.text)}')">Use This</button>
+              <button class="copy-btn" onclick="copyHandler('${encodeURIComponent(suggestion.text)}', this)">Copy</button>
+            </div>
+          </div>`;
       });
     } else {
-      const noImprovementDiv = document.createElement("div");
-      noImprovementDiv.className = "suggestion-container";
-      noImprovementDiv.textContent = "No improvements generated.";
-      container.appendChild(noImprovementDiv);
+      html += "<div class='suggestion-container'>No improvements generated.</div>";
     }
+
+    container.innerHTML = html;
   };
 
   // Function to display formatted custom response
   const displayCustomResponse = (content) => {
     const container = document.getElementById("text-enhancer-content");
-    container.innerHTML = ""; // Clear previous content
     
     // Convert markdown-like formatting to HTML
     let formattedContent = content
@@ -740,22 +662,13 @@ Provide a well-formatted response that directly addresses the user's request.`;
       return '<ul>' + match.replace(/<br>/g, '') + '</ul>';
     });
 
-    const formattedDiv = document.createElement("div");
-    formattedDiv.className = "formatted-content";
-    formattedDiv.innerHTML = formattedContent;
-    container.appendChild(formattedDiv);
-    
-    // Create action buttons
-    const actionDiv = document.createElement("div");
-    actionDiv.className = "suggestion-actions";
-    
-    const copyBtn = document.createElement("button");
-    copyBtn.className = "copy-btn";
-    copyBtn.textContent = "Copy Raw Text";
-    copyBtn.addEventListener("click", () => copyToClipboard(content, copyBtn));
-    
-    actionDiv.appendChild(copyBtn);
-    container.appendChild(actionDiv);
+    container.innerHTML = `
+      <div class="formatted-content">
+        ${formattedContent}
+      </div>
+      <div class="suggestion-actions">
+        <button class="copy-btn" onclick="copyHandler('${encodeURIComponent(content)}', this)">Copy Raw Text</button>
+      </div>`;
   };
 
   // Initialize the text enhancer
@@ -860,7 +773,16 @@ Provide a well-formatted response that directly addresses the user's request.`;
       popupContent.style.display = "none";
     };
 
-    // Remove the global handlers since we're now using direct event listeners
+    // Global handlers for buttons
+    window.replaceTextHandler = function(encodedText) {
+      const text = decodeURIComponent(encodedText);
+      replaceSelectedText(text);
+    };
+
+    window.copyHandler = function(encodedText, button) {
+      const text = decodeURIComponent(encodedText);
+      copyToClipboard(text, button);
+    };
 
     // Handle text selection and mouse up events
     document.addEventListener("mouseup", function (e) {
@@ -917,7 +839,7 @@ Provide a well-formatted response that directly addresses the user's request.`;
 
       try {
         const result = await correctGrammarWithGemini(currentSelection, API_KEY);
-        displayGrammarCorrection(result, replaceSelectedText);
+        displayGrammarCorrection(result);
       } catch (error) {
         contentContainer.innerHTML = `<div style="color: #e74c3c">Error: ${error.message}</div>`;
       } finally {
@@ -934,7 +856,7 @@ Provide a well-formatted response that directly addresses the user's request.`;
 
       try {
         const result = await improveWritingWithGemini(currentSelection, API_KEY);
-        displayWritingImprovements(result, replaceSelectedText);
+        displayWritingImprovements(result);
       } catch (error) {
         contentContainer.innerHTML = `<div style="color: #e74c3c">Error: ${error.message}</div>`;
       } finally {
