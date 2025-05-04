@@ -1,3 +1,4 @@
+// Function to get Gemini API token from storage
 function getGeminiToken() {
   return new Promise((resolve, reject) => {
     chrome.storage.sync.get(["geminiApiToken"], function (result) {
@@ -10,6 +11,113 @@ function getGeminiToken() {
   });
 }
 
+// Function to check if running inside an iframe
+const isInIframe = () => {
+  return window.self !== window.top;
+};
+
+// Function to check if element is an input or textarea
+const isInputElement = (element) => {
+  return (
+    element &&
+    ((element.tagName === "INPUT" &&
+      (element.type === "text" ||
+        element.type === "search" ||
+        element.type === "email" ||
+        element.type === "url")) ||
+      element.tagName === "TEXTAREA" ||
+      element.getAttribute("contenteditable") === "true")
+  );
+};
+
+// Store selection information when text is selected
+const captureSelectionState = () => {
+  const element = document.activeElement;
+  if (!isInputElement(element)) return null;
+
+  if (element.tagName === "INPUT" || element.tagName === "TEXTAREA") {
+    return {
+      type: "input",
+      element: element,
+      start: element.selectionStart,
+      end: element.selectionEnd,
+      text: element.value.substring(
+        element.selectionStart,
+        element.selectionEnd
+      ),
+      isIframe: isInIframe(),
+    };
+  } else if (element.getAttribute("contenteditable") === "true") {
+    const selection = window.getSelection();
+    if (selection.rangeCount === 0) return null;
+
+    const range = selection.getRangeAt(0);
+    return {
+      type: "contenteditable",
+      element: element,
+      range: range.cloneRange(),
+      text: selection.toString(),
+      isIframe: isInIframe(),
+    };
+  }
+
+  return null;
+};
+
+// Function to replace text in the captured selection
+const replaceSelectedText = (selectionState, newText) => {
+  if (!selectionState) {
+    console.error("No selection state provided for text replacement");
+    return;
+  }
+
+  try {
+    if (selectionState.type === "input") {
+      const elem = selectionState.element;
+      const start = selectionState.start;
+      const end = selectionState.end;
+      const currentValue = elem.value;
+
+      elem.value =
+        currentValue.substring(0, start) +
+        newText +
+        currentValue.substring(end);
+
+      elem.focus();
+      elem.setSelectionRange(start, start + newText.length);
+    } else if (selectionState.type === "contenteditable") {
+      const elem = selectionState.element;
+      const range = selectionState.range;
+
+      elem.focus();
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.execCommand("insertText", false, newText);
+    }
+  } catch (error) {
+    console.error("Error replacing text:", error);
+  }
+};
+
+// Message listener for communication with popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "get_selection") {
+    const selectionState = captureSelectionState();
+    if (selectionState && selectionState.text) {
+      const selectionId = Date.now() + Math.random().toString(36).substring(2);
+      window.latestSelectionState = { id: selectionId, state: selectionState };
+      sendResponse({ text: selectionState.text, selectionId: selectionId });
+    } else {
+      sendResponse({ text: null });
+    }
+  } else if (message.type === "replace_text") {
+    if (window.latestSelectionState && message.selectionId === window.latestSelectionState.id) {
+      replaceSelectedText(window.latestSelectionState.state, message.newText);
+    }
+  }
+});
+
 // Immediately invoked function to avoid global namespace pollution
 (async function () {
   // Your API key
@@ -20,11 +128,6 @@ function getGeminiToken() {
     );
     return; // Exit if no API key
   }
-
-  // Function to check if running inside an iframe
-  const isInIframe = () => {
-    return window.self !== window.top;
-  };
 
   // Function to send selection data to the parent window
   const sendSelectionToParent = (selectionData) => {
@@ -794,123 +897,11 @@ Provide a well-formatted response that directly addresses the user's request.`;
       uiElements = createElements();
     }
 
-    // Function to check if element is an input or textarea
-    const isInputElement = (element) => {
-      return (
-        element &&
-        ((element.tagName === "INPUT" &&
-          (element.type === "text" ||
-            element.type === "search" ||
-            element.type === "email" ||
-            element.type === "url")) ||
-          element.tagName === "TEXTAREA" ||
-          element.getAttribute("contenteditable") === "true")
-      );
-    };
-
     // Track mouse position
     document.addEventListener("mousemove", function (e) {
       lastMousePosition.x = e.clientX;
       lastMousePosition.y = e.clientY;
     });
-
-    // Store selection information when text is selected
-    const captureSelectionState = () => {
-      const element = document.activeElement;
-      if (!isInputElement(element)) return null;
-
-      if (element.tagName === "INPUT" || element.tagName === "TEXTAREA") {
-        return {
-          type: "input",
-          element: element,
-          start: element.selectionStart,
-          end: element.selectionEnd,
-          text: element.value.substring(
-            element.selectionStart,
-            element.selectionEnd
-          ),
-          isIframe: isInIframe(),
-        };
-      } else if (element.getAttribute("contenteditable") === "true") {
-        const selection = window.getSelection();
-        if (selection.rangeCount === 0) return null;
-
-        const range = selection.getRangeAt(0);
-        return {
-          type: "contenteditable",
-          element: element,
-          range: range.cloneRange(),
-          text: selection.toString(),
-          isIframe: isInIframe(),
-        };
-      }
-
-      return null;
-    };
-
-    // Function to replace text in the captured selection
-    const replaceSelectedText = (newText) => {
-      if (!cachedSelectionState) {
-        console.error("No cached selection state found for text replacement");
-        return;
-      }
-
-      try {
-        if (cachedSelectionState.isIframe) {
-          // Send message to iframe to replace text
-          const iframe = document.querySelector("iframe[class*='editor'], iframe[id*='editor'], iframe[data-testid*='editor']");
-          if (iframe && iframe.contentWindow) {
-            iframe.contentWindow.postMessage(
-              {
-                type: "TEXT_ENHANCER_REPLACE_TEXT",
-                newText: newText,
-                selectionState: cachedSelectionState,
-              },
-              "*"
-            );
-          } else {
-            console.error("Could not find editor iframe for text replacement");
-          }
-        } else if (cachedSelectionState.type === "input") {
-          const elem = cachedSelectionState.element;
-          const start = cachedSelectionState.start;
-          const end = cachedSelectionState.end;
-          const currentValue = elem.value;
-
-          elem.value =
-            currentValue.substring(0, start) +
-            newText +
-            currentValue.substring(end);
-
-          elem.focus();
-          elem.setSelectionRange(start, start + newText.length);
-        } else if (cachedSelectionState.type === "contenteditable") {
-          const elem = cachedSelectionState.element;
-          const range = cachedSelectionState.range;
-
-          elem.focus();
-          const selection = window.getSelection();
-          selection.removeAllRanges();
-          selection.addRange(range);
-          document.execCommand("insertText", false, newText);
-        }
-      } catch (error) {
-        console.error("Error replacing text:", error);
-      }
-
-      if (uiElements) {
-        uiElements.popupContent.style.display = "none";
-      }
-    };
-
-    // Debounce function to prevent rapid event firing
-    const debounce = (func, wait) => {
-      let timeout;
-      return (...args) => {
-        clearTimeout(timeout);
-        timeout = setTimeout(() => func.apply(this, args), wait);
-      };
-    };
 
     // Handle text selection in iframe
     if (isInIframe()) {
@@ -1075,7 +1066,7 @@ Provide a well-formatted response that directly addresses the user's request.`;
 
         try {
           const result = await correctGrammarWithGemini(currentSelection, API_KEY);
-          displayGrammarCorrection(result, replaceSelectedText);
+          displayGrammarCorrection(result, replaceSelectedText.bind(null, cachedSelectionState));
         } catch (error) {
           uiElements.contentContainer.innerHTML = `<div style="color: #e74c3c">Error: ${error.message}</div>`;
         } finally {
@@ -1092,7 +1083,7 @@ Provide a well-formatted response that directly addresses the user's request.`;
 
         try {
           const result = await improveWritingWithGemini(currentSelection, API_KEY);
-          displayWritingImprovements(result, replaceSelectedText);
+          displayWritingImprovements(result, replaceSelectedText.bind(null, cachedSelectionState));
         } catch (error) {
           uiElements.contentContainer.innerHTML = `<div style="color: #e74c3c">Error: ${error.message}</div>`;
         } finally {
@@ -1197,6 +1188,15 @@ Provide a well-formatted response that directly addresses the user's request.`;
     }
 
     console.log("Enhanced text enhancer tool activated with iframe support!");
+  };
+
+  // Debounce function to prevent rapid event firing
+  const debounce = (func, wait) => {
+    let timeout;
+    return (...args) => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func.apply(this, args), wait);
+    };
   };
 
   // Initialize the enhancer when the page is loaded

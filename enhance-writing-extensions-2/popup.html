@@ -12,6 +12,9 @@
       color: #4285f4;
       margin-top: 0;
     }
+    h3 {
+      margin: 10px 0;
+    }
     .input-group {
       margin-bottom: 15px;
     }
@@ -35,6 +38,7 @@
       border-radius: 4px;
       cursor: pointer;
       font-weight: bold;
+      margin-right: 5px;
     }
     button:hover {
       background-color: #3367d6;
@@ -52,6 +56,24 @@
       background-color: #f8d7da;
       color: #721c24;
     }
+    #selection-options {
+      margin-top: 15px;
+    }
+    #selected-text {
+      background-color: #f9f9f9;
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 10px;
+      word-wrap: break-word;
+    }
+    #result-container {
+      margin-top: 10px;
+    }
+    #result-container p {
+      background-color: #f0f0f0;
+      padding: 10px;
+      border-radius: 4px;
+    }
   </style>
 </head>
 <body>
@@ -62,6 +84,18 @@
   </div>
   <button id="saveToken">Save Token</button>
   <div id="status" class="status" style="display: none;"></div>
+
+  <div id="selection-options" style="display: none;">
+    <h3>Selected Text:</h3>
+    <p id="selected-text"></p>
+    <button id="grammar-btn">Correct Grammar</button>
+    <button id="improve-btn">Improve Writing</button>
+    <button id="custom-btn">Custom Prompt</button>
+    <div id="result-container"></div>
+  </div>
+  <div id="no-selection" style="display: none;">
+    <p>No text selected. Select text in the page and try again.</p>
+  </div>
 
   <script src="popup.js"></script>
 </body>
