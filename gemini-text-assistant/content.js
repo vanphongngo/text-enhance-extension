@@ -21,26 +21,6 @@ function getGeminiToken() {
     return; // Exit if no API key
   }
 
-  // Function to check if running inside an iframe
-  const isInIframe = () => {
-    return window.self !== window.top;
-  };
-
-  // Function to send selection data to the parent window
-  const sendSelectionToParent = (selectionData) => {
-    try {
-      window.parent.postMessage(
-        {
-          type: "TEXT_ENHANCER_SELECTION",
-          data: selectionData,
-        },
-        "*" // In production, use specific origin like "https://*.atlassian.net"
-      );
-    } catch (error) {
-      console.error("Error sending selection to parent:", error);
-    }
-  };
-
   // Function to correct grammar using Gemini API
   async function correctGrammarWithGemini(text, apiKey) {
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
@@ -789,10 +769,7 @@ Provide a well-formatted response that directly addresses the user's request.`;
     let cachedSelectionState = null;
 
     // Create UI elements only in the main window
-    let uiElements = null;
-    if (!isInIframe()) {
-      uiElements = createElements();
-    }
+    let uiElements = createElements();
 
     // Function to check if element is an input or textarea
     const isInputElement = (element) => {
@@ -828,8 +805,7 @@ Provide a well-formatted response that directly addresses the user's request.`;
           text: element.value.substring(
             element.selectionStart,
             element.selectionEnd
-          ),
-          isIframe: isInIframe(),
+          )
         };
       } else if (element.getAttribute("contenteditable") === "true") {
         const selection = window.getSelection();
@@ -840,8 +816,7 @@ Provide a well-formatted response that directly addresses the user's request.`;
           type: "contenteditable",
           element: element,
           range: range.cloneRange(),
-          text: selection.toString(),
-          isIframe: isInIframe(),
+          text: selection.toString()
         };
       }
 
