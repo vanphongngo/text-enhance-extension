@@ -1,120 +1,34 @@
-function getAllSelectedText() {
-  // Function to get selection from a document
-  function getSelectionFromDocument(doc) {
-    let selection = "";
+let selectionElement = null;
 
-    // Get the window selection if it exists
-    if (doc.getSelection) {
-      selection = doc.getSelection().toString();
-    }
-    // For older IE support
-    else if (doc.selection && doc.selection.type !== "Control") {
-      selection = doc.selection.createRange().text;
-    }
-
-    return selection;
+document.addEventListener('selectionchange', function() {
+  const selection = document.getSelection();
+  if (selection && selection.toString().trim() !== '') {
+    console.log('%cMain document selection:', 'color: blue; font-weight: bold', selection.toString());
   }
+});
 
-  // Get selection from main document
-  let mainSelection = getSelectionFromDocument(document);
-  let allSelections = mainSelection ? [mainSelection] : [];
+// Find all iframes in the document
+const iframes = document.querySelectorAll('iframe');
 
-  // Try to get selections from all iframes
+// For each iframe that's accessible
+iframes.forEach((iframe, index) => {
   try {
-    const iframes = document.querySelectorAll("iframe");
+    // Try to access the iframe's document (this will fail for cross-origin iframes)
+    const iframeDocument = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
 
-    for (let i = 0; i < iframes.length; i++) {
-      try {
-        // Skip iframes from different origins (will throw security error)
-        const iframeDoc =
-          iframes[i].contentDocument || iframes[i].contentWindow.document;
-        const iframeSelection = getSelectionFromDocument(iframeDoc);
-
-        if (iframeSelection) {
-          allSelections.push(iframeSelection);
+    if (iframeDocument) {
+      // Add selection change listener to this iframe
+      iframeDocument.addEventListener('selectionchange', function() {
+        const selection = iframeDocument.getSelection();
+        if (selection && selection.toString().trim() !== '') {
+          console.log(`%cIframe #${index} selection:`, 'color: green; font-weight: bold', selection.toString());
         }
-      } catch (err) {
-        // Silent fail for cross-origin iframes
-        console.log("Couldn't access iframe content due to same-origin policy");
-      }
-    }
-  } catch (err) {
-    console.error("Error accessing iframes:", err);
-  }
-
-  return allSelections.join("\n");
-}
-
-(function () {
-  function enhanceSelectedText() {
-    // Function to capitalize first letter of each word
-    function capitalizeWords(text) {
-      return text.replace(/\b\w+/g, function (word) {
-        return word.charAt(0).toUpperCase() + word.slice(1);
+        selectionElement = selection;
       });
+      console.log(`%cSuccessfully added selection listener to iframe #${index}`, 'color: green');
+
     }
-
-    // Function to process selection in a document
-    function processSelectionInDocument(doc) {
-      let selection = doc.getSelection();
-      if (!selection || selection.isCollapsed) return false;
-
-      // Get the selected range
-      let range = selection.getRangeAt(0);
-      if (!range) return false;
-
-      // Get the text content and format it
-      let originalText = selection.toString();
-      let capitalizedText = capitalizeWords(originalText);
-
-      // Delete the original content and insert the new content
-      range.deleteContents();
-      range.insertNode(doc.createTextNode(capitalizedText));
-
-      return true;
-    }
-
-    // Process main document
-    let mainResult = processSelectionInDocument(document);
-    let processedAny = mainResult;
-
-    // Try to process selections in all accessible iframes
-    try {
-      const iframes = document.querySelectorAll("iframe");
-
-      for (let i = 0; i < iframes.length; i++) {
-        try {
-          // Skip iframes from different origins (will throw security error)
-          const iframeDoc =
-            iframes[i].contentDocument || iframes[i].contentWindow.document;
-          const iframeResult = processSelectionInDocument(iframeDoc);
-          processedAny = processedAny || iframeResult;
-        } catch (err) {
-          // Silent fail for cross-origin iframes
-          console.log(
-            "Couldn't access iframe content due to same-origin policy"
-          );
-        }
-      }
-    } catch (err) {
-      console.error("Error accessing iframes:", err);
-    }
-
-    // Copy the modified text to clipboard (main document only)
-    if (mainResult) {
-      try {
-        document.execCommand("copy");
-        console.log("Modified text copied to clipboard");
-      } catch (err) {
-        console.error("Could not copy to clipboard:", err);
-      }
-    }
-
-    return processedAny
-      ? "Text has been capitalized and replaced"
-      : "No text was selected";
+  } catch (error) {
+    console.log(`%cCannot access iframe #${index} (likely cross-origin)`, 'color: red', error.message);
   }
-
-  // Execute the function
-  enhanceSelectedText();
-})();
+});

@@ -856,22 +856,7 @@ Provide a well-formatted response that directly addresses the user's request.`;
       }
 
       try {
-        if (cachedSelectionState.isIframe) {
-          // Send message to iframe to replace text
-          const iframe = document.querySelector("iframe[class*='editor'], iframe[id*='editor'], iframe[data-testid*='editor']");
-          if (iframe && iframe.contentWindow) {
-            iframe.contentWindow.postMessage(
-              {
-                type: "TEXT_ENHANCER_REPLACE_TEXT",
-                newText: newText,
-                selectionState: cachedSelectionState,
-              },
-              "*"
-            );
-          } else {
-            console.error("Could not find editor iframe for text replacement");
-          }
-        } else if (cachedSelectionState.type === "input") {
+        if (cachedSelectionState.type === "input") {
           const elem = cachedSelectionState.element;
           const start = cachedSelectionState.start;
           const end = cachedSelectionState.end;
@@ -893,6 +878,19 @@ Provide a well-formatted response that directly addresses the user's request.`;
           selection.removeAllRanges();
           selection.addRange(range);
           document.execCommand("insertText", false, newText);
+        } else {
+          const elem = cachedSelectionState.element;
+          const start = cachedSelectionState.start;
+          const end = cachedSelectionState.end;
+          const currentValue = elem.value;
+
+          elem.value =
+              currentValue.substring(0, start) +
+              newText +
+              currentValue.substring(end);
+
+          elem.focus();
+          elem.setSelectionRange(start, start + newText.length);
         }
       } catch (error) {
         console.error("Error replacing text:", error);
@@ -912,148 +910,275 @@ Provide a well-formatted response that directly addresses the user's request.`;
       };
     };
 
-    // Handle text selection in iframe
-    if (isInIframe()) {
-      // Ensure iframe document is accessible
-      try {
-        const handleMouseUp = debounce((e) => {
-          const selection = window.getSelection();
-          const selectedText = selection.toString().trim();
+// Global object to track iframe selections
+    const iframeSelectionState = {
+      activeWindow: null,
+      activeDocument: null,
+      activeElement: null,
+      selectionRange: null,
+      selectedText: null,
 
-          if (!selectedText || selectedText.length < 3) return;
-
-          activeElement = document.activeElement;
-
-          if (!isInputElement(activeElement)) return;
-
-          const selectionState = captureSelectionState();
-          if (!selectionState) return;
-
-          // Adjust mouse coordinates to main window context
-          const iframeRect = window.frameElement ? window.frameElement.getBoundingClientRect() : { left: 0, top: 0 };
-          const adjustedX = e.clientX + iframeRect.left + window.scrollX;
-          const adjustedY = e.clientY + iframeRect.top + window.scrollY;
-
-          sendSelectionToParent({
-            text: selectedText,
-            mouseX: adjustedX,
-            mouseY: adjustedY,
-            selectionState: selectionState,
-          });
-        }, 50);
-
-        // Attach multiple event listeners to ensure capture
-        document.addEventListener("mouseup", handleMouseUp);
-        document.addEventListener("selectionchange", () => {
-          // Trigger mouseup logic on selection change to catch edge cases
-          const event = new Event("mouseup");
-          document.dispatchEvent(event);
-        });
-
-        console.log("Text enhancer initialized in iframe with enhanced mouseup handling");
-      } catch (error) {
-        console.error("Error setting up iframe event listeners:", error);
+      // Helper method to clear state
+      clear() {
+        this.activeWindow = null;
+        this.activeDocument = null;
+        this.activeElement = null;
+        this.selectionRange = null;
+        this.selectedText = null;
       }
+    };
 
-      // Listen for replace text messages from parent
-      window.addEventListener("message", (event) => {
-        if (event.data.type === "TEXT_ENHANCER_REPLACE_TEXT") {
-          cachedSelectionState = event.data.selectionState;
-          try {
-            if (cachedSelectionState.type === "input") {
-              const elem = cachedSelectionState.element;
-              const start = cachedSelectionState.start;
-              const end = cachedSelectionState.end;
-              const currentValue = elem.value;
+    if (uiElements) {
+      // Function to add mouseup event listener to a document/window
+      const addMouseUpListener = (targetDoc, targetWin) => {
+        targetDoc.addEventListener("mouseup", (e) => {
+          setTimeout(() => {
+            const selection = targetWin.getSelection();
+            const selectedText = selection.toString().trim();
 
-              elem.value =
-                currentValue.substring(0, start) +
-                event.data.newText +
-                currentValue.substring(end);
-
-              elem.focus();
-              elem.setSelectionRange(start, start + event.data.newText.length);
-            } else if (cachedSelectionState.type === "contenteditable") {
-              const elem = cachedSelectionState.element;
-              const range = cachedSelectionState.range;
-
-              elem.focus();
-              const selection = window.getSelection();
-              selection.removeAllRanges();
-              selection.addRange(range);
-              document.execCommand("insertText", false, event.data.newText);
+            if (!selectedText || selectedText.length < 3) {
+              uiElements.optionsContainer.style.opacity = "0";
+              uiElements.optionsContainer.style.pointerEvents = "none";
+              return;
             }
-          } catch (error) {
-            console.error("Error replacing text in iframe:", error);
+
+            // For iframe selections, we'll use messaging to communicate with the parent
+            if (targetWin !== window) {
+              const mousePos = {
+                x: e.clientX + targetDoc.defaultView.frameElement.getBoundingClientRect().left,
+                y: e.clientY + targetDoc.defaultView.frameElement.getBoundingClientRect().top
+              };
+
+              // Capture selection state relevant to the iframe
+              const selectionState = captureIframeSelectionState(targetWin, targetDoc);
+
+              // Send message to parent window
+              window.postMessage({
+                type: "TEXT_ENHANCER_SELECTION",
+                data: {
+                  text: selectedText,
+                  mouseX: mousePos.x,
+                  mouseY: mousePos.y,
+                  selectionState: selectionState
+                }
+              }, "*");
+
+              return;
+            }
+
+            activeElement = targetDoc.activeElement;
+
+            if (!isInputElement(activeElement)) {
+              uiElements.optionsContainer.style.opacity = "0";
+              uiElements.optionsContainer.style.pointerEvents = "none";
+              return;
+            }
+
+            const newSelectionState = captureSelectionState();
+            if (!newSelectionState) return;
+
+            cachedSelectionState = newSelectionState;
+            currentSelection = selectedText;
+
+            const optionsWidth = 300;
+            const optionsHeight = 40;
+
+            const safePos = getPositionInViewport(
+                lastMousePosition.x,
+                lastMousePosition.y + 10,
+                optionsWidth,
+                optionsHeight
+            );
+
+            uiElements.optionsContainer.style.top = window.scrollY + safePos.y + "px";
+            uiElements.optionsContainer.style.left = window.scrollX + safePos.x + "px";
+            uiElements.optionsContainer.style.opacity = "1";
+            uiElements.optionsContainer.style.pointerEvents = "auto";
+
+            uiElements.popupContent.style.display = "none";
+          }, 100); // Increased delay to ensure selection is stable
+        });
+      };
+
+      // Function to capture selection state within an iframe
+      const captureIframeSelectionState = (iframeWin, iframeDoc) => {
+        const selection = iframeWin.getSelection();
+        if (!selection.rangeCount) return null;
+
+        const range = selection.getRangeAt(0);
+
+        // Store the range for this iframe in the global object
+        if (iframeWin !== window) {
+          // Store references for later use in replacement
+          iframeSelectionState.activeWindow = iframeWin;
+          iframeSelectionState.activeDocument = iframeDoc;
+          iframeSelectionState.activeElement = iframeDoc.activeElement;
+          iframeSelectionState.selectionRange = range.cloneRange();
+          iframeSelectionState.selectedText = selection.toString();
+
+          console.log(iframeSelectionState);
+          testElement = iframeSelectionState;
+
+        }
+
+        return {
+          start: range.startOffset,
+          end: range.endOffset,
+          text: selection.toString(),
+          parentElement: {
+            tagName: range.startContainer.parentElement ? range.startContainer.parentElement.tagName : null,
+            className: range.startContainer.parentElement ? range.startContainer.parentElement.className : null
+          },
+          iframeSelector: getIframeSelector(iframeWin), // Helper function to identify the iframe
+          isContentEditable: range.startContainer.parentElement ?
+              range.startContainer.parentElement.isContentEditable : false,
+          nodePath: getNodePath(range.startContainer, iframeDoc) // Store path to the node for reliable retrieval
+        };
+      };
+
+      // Helper function to get a path to a node within document
+      const getNodePath = (node, doc) => {
+        let path = [];
+        let current = node;
+
+        while (current && current !== doc) {
+          let index = 0;
+          let sibling = current;
+
+          while (sibling = sibling.previousSibling) {
+            index++;
           }
+
+          path.unshift(index);
+          current = current.parentNode;
+        }
+
+        return path;
+      };
+
+      // Helper function to get a selector for the iframe
+      const getIframeSelector = (iframeWin) => {
+        const frameElement = iframeWin.frameElement;
+        if (!frameElement) return null;
+
+        // Basic selector based on id, class, or index
+        if (frameElement.id) return `#${frameElement.id}`;
+        if (frameElement.className) return `.${frameElement.className.split(' ').join('.')}`;
+
+        // Fallback to index-based selector
+        const allIframes = Array.from(document.querySelectorAll('iframe'));
+        const index = allIframes.indexOf(frameElement);
+        return `iframe:nth-child(${index + 1})`;
+      };
+
+      // Add listener to main document
+      addMouseUpListener(document, window);
+
+      // Function to recursively add listeners to all iframes
+      const addListenersToIframes = () => {
+        const iframes = document.querySelectorAll('iframe');
+
+        iframes.forEach(iframe => {
+          try {
+            // Only proceed if we can access the iframe (same-origin policy)
+            if (iframe.contentDocument) {
+              addMouseUpListener(iframe.contentDocument, iframe.contentWindow);
+
+              // Also listen for dynamically added iframes inside this iframe
+              if (iframe.contentWindow) {
+                // Add mutation observer to watch for new iframes
+                const observer = new MutationObserver(mutations => {
+                  const hasNewIframes = mutations.some(mutation =>
+                      Array.from(mutation.addedNodes).some(node =>
+                          node.tagName === 'IFRAME' || (node.querySelectorAll && node.querySelectorAll('iframe').length > 0)
+                      )
+                  );
+
+                  if (hasNewIframes) {
+                    // Recursively add listeners to new iframes
+                    addListenersToIframes();
+                  }
+                });
+
+                observer.observe(iframe.contentDocument.body, {
+                  childList: true,
+                  subtree: true
+                });
+              }
+            }
+          } catch (e) {
+            // Handle cross-origin iframe access errors silently
+            console.log('Cannot access iframe due to same-origin policy:', e);
+          }
+        });
+      };
+
+      // Initial setup for existing iframes
+      addListenersToIframes();
+
+      // Watch for dynamically added iframes in the main document
+      const iframeObserver = new MutationObserver(mutations => {
+        const hasNewIframes = mutations.some(mutation =>
+            Array.from(mutation.addedNodes).some(node =>
+                node.tagName === 'IFRAME' || (node.querySelectorAll && node.querySelectorAll('iframe').length > 0)
+            )
+        );
+
+        if (hasNewIframes) {
+          addListenersToIframes();
         }
       });
 
-      return;
-    }
-
-    // Main window logic
-    if (uiElements) {
-      document.addEventListener("mouseup", (e) => {
-        setTimeout(() => {
-          const selection = window.getSelection();
-          const selectedText = selection.toString().trim();
-
-          if (!selectedText || selectedText.length < 3) {
-            uiElements.optionsContainer.style.opacity = "0";
-            uiElements.optionsContainer.style.pointerEvents = "none";
-            return;
-          }
-
-          activeElement = document.activeElement;
-
-          if (!isInputElement(activeElement)) {
-            uiElements.optionsContainer.style.opacity = "0";
-            uiElements.optionsContainer.style.pointerEvents = "none";
-            return;
-          }
-
-          const newSelectionState = captureSelectionState();
-          if (!newSelectionState) return;
-
-          cachedSelectionState = newSelectionState;
-          currentSelection = selectedText;
-
-          const optionsWidth = 300;
-          const optionsHeight = 40;
-
-          const safePos = getPositionInViewport(
-            lastMousePosition.x,
-            lastMousePosition.y + 10,
-            optionsWidth,
-            optionsHeight
-          );
-
-          uiElements.optionsContainer.style.top = window.scrollY + safePos.y + "px";
-          uiElements.optionsContainer.style.left = window.scrollX + safePos.x + "px";
-          uiElements.optionsContainer.style.opacity = "1";
-          uiElements.optionsContainer.style.pointerEvents = "auto";
-
-          uiElements.popupContent.style.display = "none";
-        }, 100); // Increased delay to ensure selection is stable
+      iframeObserver.observe(document.body, {
+        childList: true,
+        subtree: true
       });
 
       // Handle messages from iframe
       window.addEventListener("message", (event) => {
         if (event.data.type === "TEXT_ENHANCER_SELECTION") {
-          const { text, mouseX, mouseY, selectionState } = event.data.data;
+          const { text, mouseX, mouseY, selectionState, iframeId, iframeIndex } = event.data.data;
 
           currentSelection = text;
           cachedSelectionState = selectionState;
+
+          // Store the iframe reference for later text replacement
+          const iframe = iframeId ? document.getElementById(iframeId) :
+              document.querySelectorAll('iframe')[iframeIndex];
+
+          if (iframe) {
+            try {
+              // Store references to the active iframe components in the global object
+              iframeSelectionState.activeWindow = iframe.contentWindow;
+              iframeSelectionState.activeDocument = iframe.contentDocument;
+
+              // Get the active element within the iframe
+              if (iframeSelectionState.activeDocument) {
+                iframeSelectionState.activeElement = iframeSelectionState.activeDocument.activeElement;
+
+                // Store the selection range for future replacement
+                if (iframeSelectionState.activeWindow &&
+                    iframeSelectionState.activeWindow.getSelection().rangeCount > 0) {
+                  iframeSelectionState.selectionRange = iframeSelectionState.activeWindow
+                      .getSelection().getRangeAt(0).cloneRange();
+                  iframeSelectionState.selectedText = text;
+                }
+              }
+            } catch (e) {
+              console.error("Error accessing iframe:", e);
+              // Reset the iframe state
+              iframeSelectionState.clear();
+            }
+          }
 
           const optionsWidth = 300;
           const optionsHeight = 40;
 
           const safePos = getPositionInViewport(
-            mouseX,
-            mouseY + 10,
-            optionsWidth,
-            optionsHeight
+              mouseX,
+              mouseY + 10,
+              optionsWidth,
+              optionsHeight
           );
 
           uiElements.optionsContainer.style.top = window.scrollY + safePos.y + "px";
@@ -1065,17 +1190,56 @@ Provide a well-formatted response that directly addresses the user's request.`;
         }
       });
 
+      // Enhanced function to replace text in iframe or regular document
+      const enhancedReplaceSelectedText = (newText) => {
+        // If we have an active iframe selection, use that
+        if (iframeSelectionState.activeWindow &&
+            iframeSelectionState.activeDocument &&
+            iframeSelectionState.selectionRange) {
+          try {
+            // Focus the iframe and its active element
+            iframeSelectionState.activeWindow.focus();
+            if (iframeSelectionState.activeElement && iframeSelectionState.activeElement.focus) {
+              iframeSelectionState.activeElement.focus();
+            }
+
+            // Create a fresh selection using our stored range
+            const selection = iframeSelectionState.activeWindow.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(iframeSelectionState.selectionRange);
+
+            // Insert the new text
+            iframeSelectionState.selectionRange.deleteContents();
+            iframeSelectionState.selectionRange.insertNode(
+                iframeSelectionState.activeDocument.createTextNode(newText)
+            );
+
+            // Clear selection after replacement
+            selection.removeAllRanges();
+
+            return true;
+          } catch (e) {
+            console.error("Error replacing text in iframe:", e);
+            // Fall back to regular replacement if iframe replacement fails
+            return replaceSelectedText(newText);
+          }
+        } else {
+          // Use the original replacement function for regular document
+          return replaceSelectedText(newText);
+        }
+      };
+
       // Set up event handlers for option buttons
       document.getElementById("text-enhancer-grammar").addEventListener("click", async () => {
         if (isProcessing) return;
-        
+
         showPopup("Correct Grammar");
         uiElements.contentContainer.innerHTML = '<div style="text-align: center;">Analyzing grammar...</div>';
         isProcessing = true;
 
         try {
           const result = await correctGrammarWithGemini(currentSelection, API_KEY);
-          displayGrammarCorrection(result, replaceSelectedText);
+          displayGrammarCorrection(result, enhancedReplaceSelectedText);
         } catch (error) {
           uiElements.contentContainer.innerHTML = `<div style="color: #e74c3c">Error: ${error.message}</div>`;
         } finally {
@@ -1085,14 +1249,14 @@ Provide a well-formatted response that directly addresses the user's request.`;
 
       document.getElementById("text-enhancer-improve").addEventListener("click", async () => {
         if (isProcessing) return;
-        
+
         showPopup("Improve Writing");
         uiElements.contentContainer.innerHTML = '<div style="text-align: center;">Generating improvements...</div>';
         isProcessing = true;
 
         try {
           const result = await improveWritingWithGemini(currentSelection, API_KEY);
-          displayWritingImprovements(result, replaceSelectedText);
+          displayWritingImprovements(result, enhancedReplaceSelectedText);
         } catch (error) {
           uiElements.contentContainer.innerHTML = `<div style="color: #e74c3c">Error: ${error.message}</div>`;
         } finally {
@@ -1102,13 +1266,13 @@ Provide a well-formatted response that directly addresses the user's request.`;
 
       document.getElementById("text-enhancer-custom").addEventListener("click", () => {
         showPopup("Custom Prompt");
-        
+
         uiElements.contentContainer.innerHTML = `
-          <div class="custom-prompt-container">
-            <h3>Custom Prompt</h3>
-            <input type="text" class="custom-prompt-input" placeholder="Enter your request (e.g., make it more formal, add examples, etc.)" />
-            <button class="custom-submit-btn">Generate</button>
-          </div>`;
+      <div class="custom-prompt-container">
+        <h3>Custom Prompt</h3>
+        <input type="text" class="custom-prompt-input" placeholder="Enter your request (e.g., make it more formal, add examples, etc.)" />
+        <button class="custom-submit-btn">Generate</button>
+      </div>`;
 
         const input = uiElements.contentContainer.querySelector(".custom-prompt-input");
         const submitBtn = uiElements.contentContainer.querySelector(".custom-submit-btn");
@@ -1137,7 +1301,7 @@ Provide a well-formatted response that directly addresses the user's request.`;
         input.addEventListener("keydown", (e) => {
           e.stopPropagation();
           e.stopImmediatePropagation();
-          
+
           if (e.key === "Enter") {
             e.preventDefault();
             handleSubmit();
@@ -1148,7 +1312,7 @@ Provide a well-formatted response that directly addresses the user's request.`;
           e.stopPropagation();
           e.stopImmediatePropagation();
         });
-        
+
         input.addEventListener("keypress", (e) => {
           e.stopPropagation();
           e.stopImmediatePropagation();
@@ -1161,21 +1325,26 @@ Provide a well-formatted response that directly addresses the user's request.`;
       // Function to show popup
       const showPopup = (title) => {
         uiElements.popupContent.querySelector("#text-enhancer-drag-handle span").textContent = `✦ ${title}`;
-        
+
         const popupWidth = 450;
         const popupHeight = 400;
 
         const optionsRect = uiElements.optionsContainer.getBoundingClientRect();
         const safePos = getPositionInViewport(
-          optionsRect.left,
-          optionsRect.bottom + 5,
-          popupWidth,
-          popupHeight
+            optionsRect.left,
+            optionsRect.bottom + 5,
+            popupWidth,
+            popupHeight
         );
 
         uiElements.popupContent.style.top = window.scrollY + safePos.y + "px";
         uiElements.popupContent.style.left = window.scrollX + safePos.x + "px";
         uiElements.popupContent.style.display = "block";
+      };
+
+      // Function to clear iframe selection state - using the object's method
+      const clearIframeSelectionState = () => {
+        iframeSelectionState.clear();
       };
 
       // Close button functionality
@@ -1184,6 +1353,7 @@ Provide a well-formatted response that directly addresses the user's request.`;
         uiElements.popupContent.style.display = "none";
         uiElements.optionsContainer.style.opacity = "0";
         uiElements.optionsContainer.style.pointerEvents = "none";
+        clearIframeSelectionState();
       });
 
       // Handle escape key to dismiss
@@ -1192,8 +1362,17 @@ Provide a well-formatted response that directly addresses the user's request.`;
           uiElements.popupContent.style.display = "none";
           uiElements.optionsContainer.style.opacity = "0";
           uiElements.optionsContainer.style.pointerEvents = "none";
+          clearIframeSelectionState();
         }
       });
+
+      // Add debug function for development
+      window.debugIframeSelection = () => {
+        return {
+          ...iframeSelectionState,
+          currentSelection
+        };
+      };
     }
 
     console.log("Enhanced text enhancer tool activated with iframe support!");
