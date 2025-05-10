@@ -333,11 +333,11 @@ Provide a well-formatted response that directly addresses the user's request.`;
       line-height: 1.5;
       display: none;
       max-height: 600px;
-      overflow-y: auto;
+      overflow-y: hidden;
       border: 1px solid #e0e0e0;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       resize: both;
-      overflow: auto;
+      overflow: hidden;
     `;
 
     // Create drag handle
@@ -523,9 +523,29 @@ Provide a well-formatted response that directly addresses the user's request.`;
     document.head.appendChild(styles);
 
     // Create content container for different types of results
+
+    
+    // Create the outer wrapper container
+    const wrapperContentContainer = document.createElement("div");
+    wrapperContentContainer.id = "wrapper-text-enhancer-wrapper";
+
+    wrapperContentContainer.style.cssText = `
+      overflow: scroll;
+      height: 100%;
+      margin: -10px -15px 0px -15px;
+      max-height: 600px;
+      padding: 15px 15px 60px 15px;
+    `;
+
+    // Create the inner content container
     const contentContainer = document.createElement("div");
     contentContainer.id = "text-enhancer-content";
-    popupContent.appendChild(contentContainer);
+
+    // Append contentContainer to wrapperContentContainer
+    wrapperContentContainer.appendChild(contentContainer);
+
+    // Append wrapperContentContainer to popupContent
+    popupContent.appendChild(wrapperContentContainer);
 
     // Append elements to the body
     document.body.appendChild(optionsContainer);
@@ -720,6 +740,10 @@ Provide a well-formatted response that directly addresses the user's request.`;
       noImprovementDiv.textContent = "No improvements generated.";
       container.appendChild(noImprovementDiv);
     }
+
+
+
+
   };
 
   // Function to display formatted custom response
